@@ -1,0 +1,10 @@
+[Interface]
+Address = {{ wg_ip }}/24
+PrivateKey = {{ wg_private_key }}
+
+[Peer]
+# serveur de supervision
+PublicKey = {{ hostvars[groups['monitoring_server'][0]].wg_public_key }}
+Endpoint = {{ hostvars[groups['monitoring_server'][0]].ansible_host }}:51820
+AllowedIPs = {{ hostvars[groups['monitoring_server'][0]].wg_ip }}/32
+PersistentKeepalive = 25

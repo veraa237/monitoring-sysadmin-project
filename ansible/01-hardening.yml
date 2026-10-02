@@ -1,0 +1,73 @@
+---
+- name: Durcissement de base (tous les hôtes)
+  hosts: all
+  become: true
+  tasks:
+    - name: Mettre à jour le système
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+
+    - name: Installer les paquets de base
+      ansible.builtin.apt:
+        name: [ufw, curl, fail2ban]
+        state: present
+
+    - name: Durcir SSH (pas de root, clés uniquement)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-hardening.conf
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          MaxAuthTries 3
+        mode: "0644"
+        validate: sshd -t -f %s
+      notify: Redémarrer SSH
+
+    - name: UFW - tout le trafic entrant refusé par défaut
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: UFW - SSH limité au réseau local (anti brute-force)
+      community.general.ufw:
+        rule: limit
+        port: "22"
+        proto: tcp
+        from_ip: "{{ lan_cidr }}"
+
+    - name: UFW - WireGuard (serveur uniquement)
+      community.general.ufw:
+        rule: allow
+        port: "51820"
+        proto: udp
+        from_ip: "{{ lan_cidr }}"
+      when: inventory_hostname in groups['monitoring_server']
+
+    - name: UFW - Grafana depuis le réseau local (serveur uniquement)
+      community.general.ufw:
+        rule: allow
+        port: "3000"
+        proto: tcp
+        from_ip: "{{ lan_cidr }}"
+      when: inventory_hostname in groups['monitoring_server']
+
+    - name: UFW - Node Exporter accessible uniquement depuis le serveur, via le VPN
+      community.general.ufw:
+        rule: allow
+        direction: in
+        interface: wg0
+        from_ip: "{{ hostvars[groups['monitoring_server'][0]].wg_ip }}"
+        port: "9100"
+        proto: tcp
+      when: inventory_hostname in groups['managed_nodes']
+
+    - name: Activer UFW
+      community.general.ufw:
+        state: enabled
+
+  handlers:
+    - name: Redémarrer SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

@@ -1,0 +1,11 @@
+[Interface]
+Address = {{ wg_ip }}/24
+ListenPort = 51820
+PrivateKey = {{ wg_private_key }}
+{% for h in groups['managed_nodes'] %}
+
+[Peer]
+# {{ h }}
+PublicKey = {{ hostvars[h].wg_public_key }}
+AllowedIPs = {{ hostvars[h].wg_ip }}/32
+{% endfor %}

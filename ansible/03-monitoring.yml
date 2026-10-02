@@ -1,0 +1,95 @@
+---
+- name: Node Exporter sur les nœuds (écoute uniquement sur l'IP VPN)
+  hosts: managed_nodes
+  become: true
+  tasks:
+    - name: Installer Node Exporter
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: true
+
+    - name: Limiter l'écoute à l'IP du tunnel
+      ansible.builtin.lineinfile:
+        path: /etc/default/prometheus-node-exporter
+        regexp: '^ARGS='
+        line: 'ARGS="--web.listen-address={{ wg_ip }}:9100"'
+      notify: Redémarrer Node Exporter
+
+    - name: Dossier de surcharge systemd
+      ansible.builtin.file:
+        path: /etc/systemd/system/prometheus-node-exporter.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Démarrer Node Exporter après WireGuard
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prometheus-node-exporter.service.d/override.conf
+        content: |
+          [Unit]
+          After=wg-quick@wg0.service
+          Requires=wg-quick@wg0.service
+        mode: "0644"
+      notify: Redémarrer Node Exporter
+
+    - name: Activer Node Exporter
+      ansible.builtin.service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Redémarrer Node Exporter
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter
+        state: restarted
+        daemon_reload: true
+
+- name: Pile Prometheus + Grafana sur le serveur
+  hosts: monitoring_server
+  become: true
+  vars_prompt:
+    - name: grafana_password
+      prompt: "Mot de passe admin Grafana (évite $ et #)"
+      private: true
+  tasks:
+    - name: Installer Docker et Docker Compose
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose]
+        state: present
+        update_cache: true
+
+    - name: Activer Docker
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Créer le dossier du projet
+      ansible.builtin.file:
+        path: /opt/monitoring
+        state: directory
+        mode: "0755"
+
+    - name: Copier les fichiers de la pile
+      ansible.builtin.copy:
+        src: "files/{{ item }}"
+        dest: "/opt/monitoring/{{ item }}"
+        mode: "0644"
+      loop:
+        - docker-compose.yml
+        - prometheus.yml
+        - grafana-datasource.yml
+
+    - name: Fichier .env (secret Grafana)
+      ansible.builtin.template:
+        src: env.j2
+        dest: /opt/monitoring/.env
+        mode: "0600"
+      no_log: true
+
+    - name: Lancer la pile
+      ansible.builtin.command: docker-compose up -d
+      args:
+        chdir: /opt/monitoring
+      changed_when: false
